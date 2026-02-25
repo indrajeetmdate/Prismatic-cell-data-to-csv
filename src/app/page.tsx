@@ -5,8 +5,30 @@ import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Download, UploadCloud, FileSpreadsheet, Trash2, AlertCircle, FileText, Link as LinkIcon } from 'lucide-react';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import autoTable from 'jspdf-autotable';
+import QRCode from 'qrcode';
 import { processExcelFile, ProcessedData } from '../utils/processor';
+
+const parseFilename = (filename: string) => {
+  let dateStr = "N/A";
+  let channelStr = "N/A";
+  const dateMatch = filename.match(/_(\d{8})\d{6}#/);
+  if (dateMatch) {
+    const rawDate = dateMatch[1];
+    dateStr = `${rawDate.substring(6,8)}/${rawDate.substring(4,6)}/${rawDate.substring(0,4)}`;
+  }
+  const channelMatch = filename.match(/#\d+#(\d+_\d+_\d+)/) || filename.match(/#(\d+_\d+_\d+)/);
+  if (channelMatch) {
+    const rawChannel = channelMatch[1];
+    const parts = rawChannel.split('_');
+    if (parts.length >= 3) {
+      channelStr = `${parts[0]}_${parts[2]}`;
+    } else {
+      channelStr = rawChannel;
+    }
+  }
+  return { dateStr, channelStr };
+};
 
 export default function Page() {
   const [processedFiles, setProcessedFiles] = useState<ProcessedData[]>([]);
@@ -15,7 +37,7 @@ export default function Page() {
   const [selectedSection, setSelectedSection] = useState<string>('');
   const [visibleSerials, setVisibleSerials] = useState<Set<string>>(new Set());
   
-  const [folderName, setFolderName] = useState('');
+  const [driveInput, setDriveInput] = useState('');
   const [isImportingDrive, setIsImportingDrive] = useState(false);
   const [importProgress, setImportProgress] = useState('');
 
@@ -66,24 +88,98 @@ export default function Page() {
   };
 
   const exportPDF = async () => {
-    const element = document.getElementById('report-content');
-    if (!element) return;
-    
     setIsExporting(true);
     try {
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: '#000000',
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      // 1. Fetch and add Logo
+      const logoUrl = "https://bfkxdpripwjxenfvwpfu.supabase.co/storage/v1/object/public/Logo/DC_Energyfull_black_bg_.png";
+      let logoBase64 = '';
+      try {
+        const res = await fetch(logoUrl);
+        const blob = await res.blob();
+        logoBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn("Could not load logo for PDF", e);
+      }
+
+      if (logoBase64) {
+        doc.addImage(logoBase64, 'PNG', 14, 10, 40, 15);
+      }
+
+      // 2. Headings
+      doc.setFontSize(18);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Cell Batch report", 14, 35);
       
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save('DC_Energy_Cell_Report.pdf');
+      doc.setFontSize(12);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Folder: ${driveInput || 'Manual Upload'}`, 14, 42);
+
+      // 3. Generate QR Codes
+      const qrCodes = await Promise.all(filteredFiles.map(f => QRCode.toDataURL(f.serialNumber, { margin: 1 })));
+
+      // 4. Draw Table
+      autoTable(doc, {
+        startY: 50,
+        theme: 'grid',
+        head: [['Serial Number', 'Date', 'Channel', 'Barcode', 'Capacity (Ah)']],
+        body: filteredFiles.map((f) => {
+          const { dateStr, channelStr } = parseFilename(f.fileName);
+          return [
+            f.serialNumber,
+            dateStr,
+            channelStr,
+            '', // Placeholder for barcode
+            typeof f.dischargeCapacity === 'number' ? f.dischargeCapacity.toFixed(4) : f.dischargeCapacity
+          ];
+        }),
+        didDrawCell: (data) => {
+          if (data.section === 'body' && data.column.index === 3) {
+            const qr = qrCodes[data.row.index];
+            if (qr) {
+              const dim = data.cell.height - 4;
+              doc.addImage(qr, 'PNG', data.cell.x + 2, data.cell.y + 2, dim, dim);
+            }
+          }
+        },
+        rowPageBreak: 'avoid',
+        styles: { 
+          minCellHeight: 14, 
+          valign: 'middle',
+          textColor: '#000000',
+          lineColor: '#d1d5db',
+          lineWidth: 0.1
+        },
+        headStyles: { 
+          fillColor: '#404041', 
+          textColor: '#ffffff' 
+        },
+        columnStyles: {
+          0: { fillColor: '#d3e5bd' }
+        }
+      });
+
+      // 5. Footer
+      const totalPages = (doc as any).internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(10);
+        doc.setTextColor(150, 150, 150);
+        doc.text("www.cnergy.co.in", pageWidth / 2, pageHeight - 10, { align: 'center' });
+      }
+
+      // 6. Trigger download
+      doc.save('Cell_Batch_Report.pdf');
     } catch (error) {
       console.error('Failed to export PDF', error);
+      alert('Failed to export PDF');
     } finally {
       setIsExporting(false);
     }
@@ -92,12 +188,13 @@ export default function Page() {
   const downloadCSV = () => {
     if (processedFiles.length === 0) return;
 
-    const headers = ['File Name', 'Serial Number', 'Discharge Capacity (Ah)'];
+    const headers = ['File Name', 'Serial Number', 'Date', 'Channel', 'Discharge Capacity (Ah)'];
     const csvContent = [
       headers.join(','),
-      ...processedFiles.map(file => 
-        `"${file.fileName}","${file.serialNumber}","${file.dischargeCapacity}"`
-      )
+      ...processedFiles.map(file => {
+        const { dateStr, channelStr } = parseFilename(file.fileName);
+        return `"${file.fileName}","${file.serialNumber}","${dateStr}","${channelStr}","${file.dischargeCapacity}"`;
+      })
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -112,14 +209,14 @@ export default function Page() {
   };
 
   const handleDriveImport = async () => {
-    if (!folderName) return;
+    if (!driveInput) return;
     setIsImportingDrive(true);
-    setImportProgress(`Searching for folder "${folderName}"...`);
+    setImportProgress(`Searching for folder...`);
     try {
       const listRes = await fetch('/api/drive/list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderName })
+        body: JSON.stringify({ folderInput })
       });
       const listData = await listRes.json();
       
@@ -145,7 +242,7 @@ export default function Page() {
       
       setImportProgress('Processing files...');
       await onDrop(downloadedFiles);
-      setFolderName('');
+      setDriveInput('');
     } catch (err: any) {
       alert(err.message || 'An error occurred during import');
     } finally {
@@ -209,10 +306,13 @@ export default function Page() {
       <header className="border-b border-[#414142] bg-[#000000] sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded bg-[#65913B] flex items-center justify-center">
-              <FileSpreadsheet className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight">DC Energy <span className="text-[#7CAC3F]">|</span> Prismatic Cell Processor</h1>
+            <img 
+              src="https://bfkxdpripwjxenfvwpfu.supabase.co/storage/v1/object/public/Logo/DC_Energyfull_black_bg_.png" 
+              alt="DC Energy Logo" 
+              className="h-8 object-contain" 
+              referrerPolicy="no-referrer" 
+            />
+            <h1 className="text-xl font-semibold tracking-tight"><span className="text-[#7CAC3F]">|</span> Prismatic Cell Processor</h1>
           </div>
           {processedFiles.length > 0 && (
             <div className="flex items-center space-x-3">
@@ -271,14 +371,14 @@ export default function Page() {
             <div className="flex flex-col sm:flex-row gap-3">
               <input 
                 type="text" 
-                placeholder="Enter folder name (e.g., Batch_01)..."
-                value={folderName}
-                onChange={(e) => setFolderName(e.target.value)}
+                placeholder="Enter folder name (e.g., Batch_01) or paste Drive link..."
+                value={driveInput}
+                onChange={(e) => setDriveInput(e.target.value)}
                 className="flex-1 bg-[#1a1a1a] border border-[#414142] rounded-md px-4 py-2 text-sm focus:outline-none focus:border-[#65913B] transition-colors"
               />
               <button
                 onClick={handleDriveImport}
-                disabled={isImportingDrive || !folderName}
+                disabled={isImportingDrive || !driveInput}
                 className="bg-[#414142] hover:bg-[#65913B] disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-6 py-2 rounded-md text-sm font-medium whitespace-nowrap"
               >
                 {isImportingDrive ? 'Importing...' : 'Fetch Files'}
@@ -360,56 +460,58 @@ export default function Page() {
                 )}
               </div>
               
-              <div className="flex-1 min-h-[500px] w-full">
+              <div className="flex-1 w-full overflow-y-auto max-h-[600px] pr-2 space-y-6">
                 {selectedSection ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#414142" vertical={false} />
-                      <XAxis 
-                        dataKey="relativeTime" 
-                        type="number" 
-                        domain={['auto', 'auto']} 
-                        stroke="#808080"
-                        tick={{ fill: '#808080' }}
-                        label={{ value: 'Relative Time (Sec)', position: 'insideBottom', offset: -10, fill: '#808080' }}
-                      />
-                      <YAxis 
-                        dataKey="capacity" 
-                        type="number" 
-                        domain={['auto', 'auto']} 
-                        stroke="#808080"
-                        tick={{ fill: '#808080' }}
-                        label={{ value: 'Capacity (Ah)', angle: -90, position: 'insideLeft', fill: '#808080' }}
-                      />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#000000', borderColor: '#414142', color: '#fff' }}
-                        itemStyle={{ color: '#fff' }}
-                        labelFormatter={(value) => `Time: ${Number(value).toFixed(1)} s`}
-                        formatter={(value: number) => [value.toFixed(4) + ' Ah', 'Capacity']}
-                      />
-                      <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                      {filteredFiles.map((file, index) => {
-                        const data = file.sections[selectedSection];
-                        if (!data || data.length === 0) return null;
-                        const color = serialNumberColors[file.serialNumber] || colors[0];
-                        return (
-                          <Line
-                            key={file.fileName}
-                            data={data}
-                            type="monotone"
-                            dataKey="capacity"
-                            name={file.serialNumber !== 'Unknown' ? file.serialNumber : file.fileName}
-                            stroke={color}
-                            strokeWidth={2}
-                            dot={false}
-                            activeDot={{ r: 6, fill: color, stroke: '#000' }}
-                          />
-                        );
-                      })}
-                    </LineChart>
-                  </ResponsiveContainer>
+                  filteredFiles.map((file, index) => {
+                    const data = file.sections[selectedSection];
+                    if (!data || data.length === 0) return null;
+                    const color = serialNumberColors[file.serialNumber] || colors[0];
+                    return (
+                      <div key={file.fileName} className="h-[250px] w-full border border-[#414142] rounded-lg p-4 bg-[#141414]">
+                        <h4 className="text-sm font-medium text-[#d1d5db] mb-2">
+                          {file.serialNumber} <span className="text-[#6b7280] text-xs">({file.fileName})</span>
+                        </h4>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#414142" vertical={false} />
+                            <XAxis 
+                              dataKey="relativeTime" 
+                              type="number" 
+                              domain={['auto', 'auto']} 
+                              stroke="#808080"
+                              tick={{ fill: '#808080' }}
+                              label={{ value: 'Relative Time (Sec)', position: 'insideBottom', offset: -10, fill: '#808080' }}
+                            />
+                            <YAxis 
+                              dataKey="capacity" 
+                              type="number" 
+                              domain={['auto', 'auto']} 
+                              stroke="#808080"
+                              tick={{ fill: '#808080' }}
+                              label={{ value: 'Capacity (Ah)', angle: -90, position: 'insideLeft', fill: '#808080' }}
+                            />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: '#000000', borderColor: '#414142', color: '#fff' }}
+                              itemStyle={{ color: '#fff' }}
+                              labelFormatter={(value) => `Time: ${Number(value).toFixed(1)} s`}
+                              formatter={(value: number) => [value.toFixed(4) + ' Ah', 'Capacity']}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="capacity"
+                              name={file.serialNumber !== 'Unknown' ? file.serialNumber : file.fileName}
+                              stroke={color}
+                              strokeWidth={2}
+                              dot={false}
+                              activeDot={{ r: 4, fill: color, stroke: '#000' }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })
                 ) : (
-                  <div className="h-full flex items-center justify-center text-[#6b7280]">
+                  <div className="h-full min-h-[300px] flex items-center justify-center text-[#6b7280]">
                     No section data available
                   </div>
                 )}
@@ -429,12 +531,16 @@ export default function Page() {
                   <thead className="text-xs text-[#9ca3af] uppercase bg-[#414142]/20 sticky top-0">
                     <tr>
                       <th className="px-4 py-3 font-medium">Serial Number</th>
+                      <th className="px-4 py-3 font-medium">Date</th>
+                      <th className="px-4 py-3 font-medium">Channel</th>
                       <th className="px-4 py-3 font-medium">Capacity (Ah)</th>
                       <th className="px-4 py-3 font-medium text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#414142]">
-                    {filteredFiles.map((file, index) => (
+                    {filteredFiles.map((file, index) => {
+                      const { dateStr, channelStr } = parseFilename(file.fileName);
+                      return (
                       <tr key={index} className="hover:bg-[#414142]/10 transition-colors group">
                         <td className="px-4 py-3 font-mono text-xs">
                           {file.error ? (
@@ -448,6 +554,8 @@ export default function Page() {
                             {file.fileName}
                           </div>
                         </td>
+                        <td className="px-4 py-3 text-xs text-[#d1d5db]">{dateStr}</td>
+                        <td className="px-4 py-3 text-xs text-[#d1d5db]">{channelStr}</td>
                         <td className="px-4 py-3 font-mono text-[#7CAC3F]">
                           {typeof file.dischargeCapacity === 'number' 
                             ? file.dischargeCapacity.toFixed(4) 
@@ -463,7 +571,7 @@ export default function Page() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
