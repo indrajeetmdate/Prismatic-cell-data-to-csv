@@ -1,0 +1,5 @@
+{
+  "name": "Prismatic Cell Batch Data Processor",
+  "description": "A tool for processing and visualizing prismatic cell battery data from Excel files.",
+  "requestFramePermissions": []
+}
