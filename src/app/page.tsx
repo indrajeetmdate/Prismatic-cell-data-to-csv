@@ -15,7 +15,7 @@ export default function Page() {
   const [selectedSection, setSelectedSection] = useState<string>('');
   const [visibleSerials, setVisibleSerials] = useState<Set<string>>(new Set());
   
-  const [driveLink, setDriveLink] = useState('');
+  const [folderName, setFolderName] = useState('');
   const [isImportingDrive, setIsImportingDrive] = useState(false);
   const [importProgress, setImportProgress] = useState('');
 
@@ -112,14 +112,14 @@ export default function Page() {
   };
 
   const handleDriveImport = async () => {
-    if (!driveLink) return;
+    if (!folderName) return;
     setIsImportingDrive(true);
-    setImportProgress('Fetching file list from Google Drive...');
+    setImportProgress(`Searching for folder "${folderName}"...`);
     try {
       const listRes = await fetch('/api/drive/list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderUrl: driveLink })
+        body: JSON.stringify({ folderName })
       });
       const listData = await listRes.json();
       
@@ -145,7 +145,7 @@ export default function Page() {
       
       setImportProgress('Processing files...');
       await onDrop(downloadedFiles);
-      setDriveLink('');
+      setFolderName('');
     } catch (err: any) {
       alert(err.message || 'An error occurred during import');
     } finally {
@@ -271,14 +271,14 @@ export default function Page() {
             <div className="flex flex-col sm:flex-row gap-3">
               <input 
                 type="text" 
-                placeholder="Paste Google Drive folder link here..."
-                value={driveLink}
-                onChange={(e) => setDriveLink(e.target.value)}
+                placeholder="Enter folder name (e.g., Batch_01)..."
+                value={folderName}
+                onChange={(e) => setFolderName(e.target.value)}
                 className="flex-1 bg-[#1a1a1a] border border-[#414142] rounded-md px-4 py-2 text-sm focus:outline-none focus:border-[#65913B] transition-colors"
               />
               <button
                 onClick={handleDriveImport}
-                disabled={isImportingDrive || !driveLink}
+                disabled={isImportingDrive || !folderName}
                 className="bg-[#414142] hover:bg-[#65913B] disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-6 py-2 rounded-md text-sm font-medium whitespace-nowrap"
               >
                 {isImportingDrive ? 'Importing...' : 'Fetch Files'}
