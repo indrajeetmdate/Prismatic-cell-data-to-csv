@@ -17,7 +17,7 @@ export async function processExcelFile(file: File): Promise<ProcessedData> {
         const workbook = XLSX.read(data, { type: 'array' });
 
         // 1. Extract Serial Number
-        let serialNumber = 'Unknown';
+        let serialNumber = '';
         const templateSheet = workbook.Sheets['Template information'];
         if (templateSheet && templateSheet['A1']) {
           const a1Value = String(templateSheet['A1'].v);
@@ -31,6 +31,17 @@ export async function processExcelFile(file: File): Promise<ProcessedData> {
             } else {
               serialNumber = a1Value;
             }
+          }
+        }
+
+        // Fallback: Extract from filename if serialNumber is blank or 'Unknown'
+        // Example: G_COM1__Highstar (Black)100Ah__311218541155988_20260225104342#0#1_1_5
+        if (!serialNumber || serialNumber === 'Unknown') {
+          const fnMatch = file.name.match(/__([A-Za-z0-9]+)_\d{8}\d{6}#/);
+          if (fnMatch && fnMatch[1]) {
+            serialNumber = fnMatch[1];
+          } else {
+            serialNumber = 'Unknown';
           }
         }
 

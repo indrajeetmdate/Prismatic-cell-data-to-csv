@@ -130,7 +130,10 @@ export default function Page() {
       doc.text(`Folder: ${driveInput || 'Manual Upload'}`, 14, currentY + 7);
 
       // 3. Generate QR Codes
-      const qrCodes = await Promise.all(filteredFiles.map(f => QRCode.toDataURL(f.serialNumber, { margin: 1 })));
+      const qrCodes = await Promise.all(filteredFiles.map(f => {
+        const serial = f.serialNumber && f.serialNumber !== 'Unknown' ? f.serialNumber : 'N/A';
+        return QRCode.toDataURL(serial, { margin: 1 });
+      }));
 
       // 4. Draw Table
       autoTable(doc, {

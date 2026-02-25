@@ -31,8 +31,8 @@ async function startServer() {
       if (urlMatch) {
         targetFolderId = urlMatch[1];
       } else {
-        // Traverse the path: # #Test reports > Cells > Prismatic > [folderInput]
-        const path = ['# #Test reports', 'Cells', 'Prismatic', folderInput];
+        // Traverse the path: # #Test Reports > Cells > Prismatic > [folderInput]
+        const path = ['# #Test Reports', 'Cells', 'Prismatic', folderInput];
         let currentParentId = null;
 
         for (const folder of path) {
