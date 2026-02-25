@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Download, UploadCloud, FileSpreadsheet, Trash2, AlertCircle, FileText } from 'lucide-react';
+import { Download, UploadCloud, FileSpreadsheet, Trash2, AlertCircle, FileText, Link as LinkIcon } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { processExcelFile, ProcessedData } from '../utils/processor';
@@ -14,6 +14,10 @@ export default function Page() {
   const [isExporting, setIsExporting] = useState(false);
   const [selectedSection, setSelectedSection] = useState<string>('');
   const [visibleSerials, setVisibleSerials] = useState<Set<string>>(new Set());
+  
+  const [driveLink, setDriveLink] = useState('');
+  const [isImportingDrive, setIsImportingDrive] = useState(false);
+  const [importProgress, setImportProgress] = useState('');
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     setIsProcessing(true);
@@ -105,6 +109,49 @@ export default function Page() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleDriveImport = async () => {
+    if (!driveLink) return;
+    setIsImportingDrive(true);
+    setImportProgress('Fetching file list from Google Drive...');
+    try {
+      const listRes = await fetch('/api/drive/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderUrl: driveLink })
+      });
+      const listData = await listRes.json();
+      
+      if (!listRes.ok) throw new Error(listData.error || 'Failed to fetch folder');
+      
+      const files = listData.files;
+      if (!files || files.length === 0) {
+        throw new Error('No .xlsx files found in this folder');
+      }
+
+      const downloadedFiles: File[] = [];
+      for (let i = 0; i < files.length; i++) {
+        setImportProgress(`Downloading ${files[i].name} (${i + 1}/${files.length})...`);
+        const dlRes = await fetch(`/api/drive/download/${files[i].id}`);
+        if (!dlRes.ok) {
+          console.error(`Failed to download ${files[i].name}`);
+          continue;
+        }
+        const blob = await dlRes.blob();
+        const file = new File([blob], files[i].name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        downloadedFiles.push(file);
+      }
+      
+      setImportProgress('Processing files...');
+      await onDrop(downloadedFiles);
+      setDriveLink('');
+    } catch (err: any) {
+      alert(err.message || 'An error occurred during import');
+    } finally {
+      setIsImportingDrive(false);
+      setImportProgress('');
+    }
   };
 
   const allSections = useMemo(() => {
@@ -214,8 +261,39 @@ export default function Page() {
               </div>
             </div>
           </div>
+
+          {/* Google Drive Import */}
+          <div className="mt-6 border border-[#414142] rounded-xl p-6 bg-[#0a0a0a]">
+            <h3 className="text-sm font-medium text-[#9ca3af] mb-3 uppercase tracking-wider flex items-center">
+              <LinkIcon className="w-4 h-4 mr-2" />
+              Import from Google Drive
+            </h3>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input 
+                type="text" 
+                placeholder="Paste Google Drive folder link here..."
+                value={driveLink}
+                onChange={(e) => setDriveLink(e.target.value)}
+                className="flex-1 bg-[#1a1a1a] border border-[#414142] rounded-md px-4 py-2 text-sm focus:outline-none focus:border-[#65913B] transition-colors"
+              />
+              <button
+                onClick={handleDriveImport}
+                disabled={isImportingDrive || !driveLink}
+                className="bg-[#414142] hover:bg-[#65913B] disabled:opacity-50 disabled:cursor-not-allowed transition-colors px-6 py-2 rounded-md text-sm font-medium whitespace-nowrap"
+              >
+                {isImportingDrive ? 'Importing...' : 'Fetch Files'}
+              </button>
+            </div>
+            {importProgress && (
+              <div className="mt-3 flex items-center space-x-2 text-[#7CAC3F]">
+                <div className="w-3 h-3 border-2 border-[#7CAC3F] border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-xs font-medium">{importProgress}</p>
+              </div>
+            )}
+          </div>
+
           {isProcessing && (
-            <div className="mt-4 flex items-center justify-center space-x-2 text-[#7CAC3F]">
+            <div className="mt-6 flex items-center justify-center space-x-2 text-[#7CAC3F]">
               <div className="w-4 h-4 border-2 border-[#7CAC3F] border-t-transparent rounded-full animate-spin"></div>
               <span className="text-sm font-medium">Processing files...</span>
             </div>
