@@ -95,7 +95,7 @@ export default function Page() {
       const pageHeight = doc.internal.pageSize.getHeight();
 
       // 1. Fetch and add Logo
-      const logoUrl = "https://bfkxdpripwjxenfvwpfu.supabase.co/storage/v1/object/public/Logo/DC_Energyfull_black_bg_.png";
+      const logoUrl = "https://bfkxdpripwjxenfvwpfu.supabase.co/storage/v1/object/public/Logo/DC_Energy_white_bg.png";
       let logoBase64 = '';
       try {
         const res = await fetch(logoUrl);
@@ -109,25 +109,32 @@ export default function Page() {
         console.warn("Could not load logo for PDF", e);
       }
 
+      let currentY = 10;
       if (logoBase64) {
-        doc.addImage(logoBase64, 'PNG', 14, 10, 40, 15);
+        const imgProps = doc.getImageProperties(logoBase64);
+        const logoWidth = 40;
+        const logoHeight = (imgProps.height * logoWidth) / imgProps.width;
+        doc.addImage(logoBase64, 'PNG', 14, currentY, logoWidth, logoHeight);
+        currentY += logoHeight + 10;
+      } else {
+        currentY += 15;
       }
 
       // 2. Headings
       doc.setFontSize(18);
       doc.setTextColor(0, 0, 0);
-      doc.text("Cell Batch report", 14, 35);
+      doc.text("Cell Batch report", 14, currentY);
       
       doc.setFontSize(12);
       doc.setTextColor(100, 100, 100);
-      doc.text(`Folder: ${driveInput || 'Manual Upload'}`, 14, 42);
+      doc.text(`Folder: ${driveInput || 'Manual Upload'}`, 14, currentY + 7);
 
       // 3. Generate QR Codes
       const qrCodes = await Promise.all(filteredFiles.map(f => QRCode.toDataURL(f.serialNumber, { margin: 1 })));
 
       // 4. Draw Table
       autoTable(doc, {
-        startY: 50,
+        startY: currentY + 15,
         theme: 'grid',
         head: [['Serial Number', 'Date', 'Channel', 'Barcode', 'Capacity (Ah)']],
         body: filteredFiles.map((f) => {
@@ -216,7 +223,7 @@ export default function Page() {
       const listRes = await fetch('/api/drive/list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderInput })
+        body: JSON.stringify({ folderInput: driveInput })
       });
       const listData = await listRes.json();
       
